@@ -12,7 +12,7 @@ set "TARGET="
 set "TARGET_ABS="
 
 set "SWEEP=0"
-set "KEEP_EXTS=cpp h lib pdf tex txt md zip png jpg jpeg obj mtl"
+set "KEEP_EXTS=cpp h lib pdf tex txt md zip png jpg jpeg obj mtl bat"
 
 set "DELETED_COUNT=0"
 set "REMOVED_DIR_COUNT=0"
@@ -68,11 +68,18 @@ goto usage
 rem ============================================================
 rem Find target directory
 rem
+rem A single dot selects the current directory.
 rem The path is resolved one directory component at a time.
 rem Each component is treated as a regular expression.
 rem ============================================================
 
 :find_target
+
+if "%PATTERN%"=="." (
+    set "TARGET=."
+    set "TARGET_ABS=%BASE_DIR%"
+    goto display_target
+)
 
 set "SEARCH_PATH=."
 set "REMAINING=%PATTERN%"
@@ -115,6 +122,8 @@ for %%D in ("!TARGET!") do (
 rem ============================================================
 rem Display target
 rem ============================================================
+
+:display_target
 
 echo Directory: !TARGET!
 echo.
@@ -164,7 +173,7 @@ rem
 rem Recursively cleans the selected directory.
 rem
 rem Preserved by default:
-rem   .cpp .h .lib .pdf .tex .txt .md .zip .png .jpg .jpeg .obj .mtl
+rem   .cpp .h .lib .pdf .tex .txt .md .zip .png .jpg .jpeg .obj .mtl .bat
 rem
 rem Additional extensions can be preserved with -a.
 rem
@@ -532,7 +541,7 @@ echo Options:
 echo   -s            Recursively clean the selected directory.
 echo                 Keeps:
 echo                   .cpp .h .lib .pdf .tex .txt .md
-echo                   .zip .png .jpg .jpeg .obj .mtl
+echo                   .zip .png .jpg .jpeg .obj .mtl .bat
 echo                 Debug and Release directories are removed
 echo                 completely regardless of file extension.
 echo                 Other deleted files are summarized by
