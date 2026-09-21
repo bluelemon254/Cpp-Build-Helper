@@ -12,7 +12,7 @@ set "TARGET="
 set "TARGET_ABS="
 
 set "SWEEP=0"
-set "KEEP_EXTS=cpp h lib pdf tex txt md"
+set "KEEP_EXTS=cpp h lib pdf tex txt md zip png jpg jpeg obj mtl"
 
 set "DELETED_COUNT=0"
 set "REMOVED_DIR_COUNT=0"
@@ -164,7 +164,7 @@ rem
 rem Recursively cleans the selected directory.
 rem
 rem Preserved by default:
-rem   .cpp .h .lib .pdf .tex .txt .md
+rem   .cpp .h .lib .pdf .tex .txt .md .zip .png .jpg .jpeg .obj .mtl
 rem
 rem Additional extensions can be preserved with -a.
 rem
@@ -532,6 +532,7 @@ echo Options:
 echo   -s            Recursively clean the selected directory.
 echo                 Keeps:
 echo                   .cpp .h .lib .pdf .tex .txt .md
+echo                   .zip .png .jpg .jpeg .obj .mtl
 echo                 Debug and Release directories are removed
 echo                 completely regardless of file extension.
 echo                 Other deleted files are summarized by
