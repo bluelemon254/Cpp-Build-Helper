@@ -62,9 +62,7 @@ echo   -i FILE     Add a source, object, or library to a direct build
 echo.
 echo Examples:
 echo   run.bat .*1 -r
-echo   run.bat .*1 -r -g
-echo   run.bat L2_MissionW03/Examples/00_.* -g -r
-echo   run.bat Basic_01-2/Basic_01-2.vcxproj -r
+echo   run.bat .*1 -r -g -i a.c
 endlocal
 exit /b 1
 
@@ -888,6 +886,103 @@ function Invoke-Program([string] $Executable, [string] $WorkingDirectory, [strin
     }
 }
 
+function Get-ProjectSourcePaths([object[]] $Projects) {
+    $paths = New-Object 'Collections.Generic.HashSet[string]' ([StringComparer]::OrdinalIgnoreCase)
+    foreach ($project in $Projects) {
+        try {
+            [xml] $document = [IO.File]::ReadAllText([string] $project)
+            $projectDirectory = [IO.Path]::GetDirectoryName([string] $project)
+            foreach ($node in @($document.SelectNodes("//*[local-name()='ClCompile']"))) {
+                $include = $node.GetAttribute('Include')
+                if ([string]::IsNullOrWhiteSpace($include) -or $include.Contains('$(')) { continue }
+                $path = if ([IO.Path]::IsPathRooted($include)) {
+                    $include
+                } else {
+                    Join-Path $projectDirectory $include
+                }
+                [void] $paths.Add([IO.Path]::GetFullPath($path))
+            }
+        } catch {
+            throw "Could not inspect Visual Studio project '$project': $($_.Exception.Message)"
+        }
+    }
+    return ,$paths
+}
+
+function Build-AutomaticDynamicLibraries(
+    [string] $Root,
+    [object[]] $Projects,
+    [string] $OutputDirectory,
+    $Settings
+) {
+    $ownedSources = Get-ProjectSourcePaths $Projects
+    $sources = @(Get-FilesByExtension $Root $script:SourceExtensions | Where-Object {
+        -not $ownedSources.Contains($_.FullName) -and -not (Test-HasEntryPoint $_)
+    })
+    if ($sources.Count -eq 0) { return @() }
+
+    $headers = @(Get-FilesByExtension $Root $script:HeaderExtensions)
+    $includeDirectories = @(
+        @($headers | ForEach-Object { $_.Directory.FullName }) +
+        @($sources | ForEach-Object { $_.Directory.FullName }) +
+        $Root | Select-Object -Unique
+    )
+    $plans = New-Object 'Collections.Generic.List[object]'
+
+    foreach ($group in @($sources | Group-Object { $_.Directory.FullName })) {
+        $groupDirectory = [string] $group.Name
+        $groupHeaders = @($headers | Where-Object { $_.Directory.FullName -ieq $groupDirectory })
+        if ($groupHeaders.Count -eq 0) { continue }
+
+        $headerText = ($groupHeaders | ForEach-Object { [IO.File]::ReadAllText($_.FullName) }) -join "`n"
+        $exportMatch = [Text.RegularExpressions.Regex]::Match(
+            $headerText,
+            '(?m)^\s*#\s*(?:ifdef\s+|if\s+defined\s*\(?\s*)([A-Za-z_][A-Za-z0-9_]*_EXPORTS)\b'
+        )
+        if (-not $exportMatch.Success) { continue }
+
+        $name = Split-Path -Leaf $groupDirectory
+        if ([string]::IsNullOrWhiteSpace($name)) { continue }
+        $plans.Add([pscustomobject]@{
+            Name = $name
+            ExportMacro = $exportMatch.Groups[1].Value
+            Sources = @($group.Group)
+        })
+    }
+
+    if ($plans.Count -eq 0) { return @() }
+
+    Import-MsvcEnvironment
+    [void] [IO.Directory]::CreateDirectory($OutputDirectory)
+    $generatedLibraries = New-Object 'Collections.Generic.List[IO.FileInfo]'
+
+    foreach ($plan in $plans) {
+        $intermediateDirectory = Join-Path $OutputDirectory ('runbat\' + $plan.Name)
+        [void] [IO.Directory]::CreateDirectory($intermediateDirectory)
+        $dll = Join-Path $OutputDirectory ($plan.Name + '.dll')
+        $library = Join-Path $OutputDirectory ($plan.Name + '.lib')
+        $linkPdb = Join-Path $intermediateDirectory ($plan.Name + '.pdb')
+        $compilePdb = Join-Path $intermediateDirectory ($plan.Name + '.compile.pdb')
+        $runtime = if ($Settings.Configuration -imatch '^Debug') { '/MDd' } else { '/MD' }
+        $arguments = @('/nologo', '/LD', '/EHsc', '/std:c++17', '/utf-8', $runtime, ('/D' + $plan.ExportMacro))
+        foreach ($directory in $includeDirectories) { $arguments += ('/I' + $directory) }
+        $arguments += @($plan.Sources | ForEach-Object FullName)
+        $arguments += ('/Fo' + $intermediateDirectory + '\')
+        $arguments += ('/Fd' + $compilePdb)
+        $arguments += @('/link', ('/OUT:' + $dll), ('/IMPLIB:' + $library), ('/PDB:' + $linkPdb))
+
+        $compileOutput = @(& cl.exe @arguments 2>&1)
+        $compileExitCode = $LASTEXITCODE
+        if ($compileExitCode -ne 0) {
+            $compileOutput | ForEach-Object { Write-Host $_.ToString() }
+            throw "Automatic DLL build for '$($plan.Name)' failed with exit code $compileExitCode."
+        }
+        $generatedLibraries.Add((Get-Item -LiteralPath $library))
+    }
+
+    return @($generatedLibraries)
+}
+
 function Build-VisualStudio([string] $Path, [string] $Mode, [string] $Root) {
     if ($Mode -eq 'Project') {
         $existingSolutions = @(Get-ChildItem -LiteralPath $Root -File -Filter '*.sln' -ErrorAction SilentlyContinue)
@@ -904,12 +999,25 @@ function Build-VisualStudio([string] $Path, [string] $Mode, [string] $Root) {
     $sources = @(Get-FilesByExtension $Root $script:SourceExtensions)
     $headers = @(Get-FilesByExtension $Root $script:HeaderExtensions)
     $projects = @(Get-FilesByExtension $Root @('.vcxproj'))
+    $selectedProjects = if ($Mode -eq 'Project') { @($Path) } else { @(Get-SolutionProjects $Path) }
+    $applications = @($selectedProjects | Where-Object { (Get-ProjectType $_) -eq 'Application' })
+    $generatedLibraries = @()
+    if ($applications.Count -eq 1) {
+        $applicationSettings = if ($Mode -eq 'Solution') {
+            Get-SolutionProjectSettings $Path $applications[0] $settings
+        } else {
+            $settings
+        }
+        $applicationToolset = Find-InstalledToolset $applicationSettings.Platform
+        $applicationTarget = Get-ProjectTargetPath $applications[0] $applicationSettings $applicationToolset
+        $generatedLibraries = @(Build-AutomaticDynamicLibraries $Root $selectedProjects ([IO.Path]::GetDirectoryName($applicationTarget)) $applicationSettings)
+    }
     $solution = if ($Mode -eq 'Solution') {
         $Path
     } else {
         @(Get-FilesByExtension $Root @('.sln') | Sort-Object FullName | Select-Object -First 1).FullName
     }
-    $libraries = @(Get-FilesByExtension $Root @('.lib', '.a'))
+    $libraries = @(Get-FilesByExtension $Root @('.lib', '.a')) + $generatedLibraries
     Write-BuildLayout $Root 'msvc' $sources $headers $projects $solution $libraries
 
     $arguments = @(
@@ -920,12 +1028,21 @@ function Build-VisualStudio([string] $Path, [string] $Mode, [string] $Root) {
     )
     if ($toolset) { $arguments += "/p:PlatformToolset=$toolset" }
     $previousTrailingClOptions = [Environment]::GetEnvironmentVariable('_CL_', 'Process')
-    $env:_CL_ = (($previousTrailingClOptions, '/std:c++17 /utf-8') -join ' ').Trim()
+    $previousTrailingLinkOptions = [Environment]::GetEnvironmentVariable('_LINK_', 'Process')
+    $includeOptions = @($headers | ForEach-Object { '/I"' + $_.Directory.FullName + '"' } | Select-Object -Unique)
+    $linkOptions = @($libraries | Where-Object { $_.Extension -ieq '.lib' } | ForEach-Object { '"' + $_.FullName + '"' } | Select-Object -Unique)
+    $env:_CL_ = (@($previousTrailingClOptions, '/std:c++17 /utf-8') + $includeOptions | Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_)
+    }) -join ' '
+    $env:_LINK_ = (@($previousTrailingLinkOptions) + $linkOptions | Where-Object {
+        -not [string]::IsNullOrWhiteSpace($_)
+    }) -join ' '
     try {
         $buildOutput = @(& $msbuild @arguments 2>&1)
         $buildExitCode = $LASTEXITCODE
     } finally {
         [Environment]::SetEnvironmentVariable('_CL_', $previousTrailingClOptions, 'Process')
+        [Environment]::SetEnvironmentVariable('_LINK_', $previousTrailingLinkOptions, 'Process')
     }
     if ($buildExitCode -ne 0) {
         $buildOutput | ForEach-Object { Write-Host $_.ToString() }
@@ -933,7 +1050,7 @@ function Build-VisualStudio([string] $Path, [string] $Mode, [string] $Root) {
     }
 
     if (-not $script:RunAfterBuild) { return 0 }
-    $projects = if ($Mode -eq 'Project') { @($Path) } else { @(Get-SolutionProjects $Path) }
+    $projects = $selectedProjects
     $applications = @($projects | Where-Object { (Get-ProjectType $_) -eq 'Application' })
     if ($applications.Count -eq 0) { throw 'The selected project/solution has no executable C++ project to run.' }
     if ($applications.Count -gt 1) {

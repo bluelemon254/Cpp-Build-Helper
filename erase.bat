@@ -11,8 +11,7 @@ set "PATTERN=%PATTERN:/=\%"
 set "TARGET="
 set "TARGET_ABS="
 
-set "SWEEP=0"
-set "KEEP_EXTS=cpp h lib pdf tex txt md zip png jpg jpeg obj mtl bat"
+set "KEEP_EXTS=cpp h lib dll pdf tex txt md zip png jpg jpeg obj mtl bat"
 
 set "DELETED_COUNT=0"
 set "REMOVED_DIR_COUNT=0"
@@ -32,13 +31,6 @@ rem ============================================================
 :collect_options
 
 if "%~1"=="" goto find_target
-
-
-if /i "%~1"=="-s" (
-    set "SWEEP=1"
-    shift
-    goto collect_options
-)
 
 
 if /i "%~1"=="-a" (
@@ -131,49 +123,12 @@ echo.
 
 
 rem ============================================================
-rem Select mode
-rem ============================================================
-
-if "!SWEEP!"=="1" goto sweep_mode
-
-
-
-rem ============================================================
-rem Default mode
-rem
-rem Recursively checks the selected directory and every child
-rem directory. In each directory, only an executable whose name
-rem exactly matches that directory name is deleted.
-rem ============================================================
-
-call :erase_directory "!TARGET!"
-
-
-for /f "delims=" %%D in ('dir /s /b /ad "!TARGET!" 2^>nul') do (
-    call :erase_directory "%%D"
-)
-
-
-echo.
-
-if "!DELETED_COUNT!"=="0" (
-    echo No matching executable files found.
-) else (
-    echo Deleted !DELETED_COUNT! executable files.
-)
-
-endlocal
-exit /b 0
-
-
-
-rem ============================================================
-rem Sweep mode (-s)
+rem Default cleanup
 rem
 rem Recursively cleans the selected directory.
 rem
 rem Preserved by default:
-rem   .cpp .h .lib .pdf .tex .txt .md .zip .png .jpg .jpeg .obj .mtl .bat
+rem   .cpp .h .lib .dll .pdf .tex .txt .md .zip .png .jpg .jpeg .obj .mtl .bat
 rem
 rem Additional extensions can be preserved with -a.
 rem
@@ -187,8 +142,6 @@ rem
 rem Finally, empty directories are removed deepest-first.
 rem The selected root directory itself is never removed.
 rem ============================================================
-
-:sweep_mode
 
 type nul > "!DELETE_STATS_FILE!"
 
@@ -261,40 +214,6 @@ for %%E in (!KEEP_EXTS!) do (
 set "KEEP_EXTS=!KEEP_EXTS! !NEW_EXT!"
 
 exit /b 0
-
-
-
-rem ============================================================
-rem Erase executable matching directory name
-rem ============================================================
-
-:erase_directory
-
-set "DIR=%~1"
-
-for %%N in ("!DIR!") do (
-    set "DIR_NAME=%%~nxN"
-)
-
-set "EXE=!DIR!\!DIR_NAME!.exe"
-
-
-if exist "!EXE!" (
-
-    del /f /q /a "!EXE!" >nul 2>&1
-
-    if not exist "!EXE!" (
-
-        set "DISPLAY=!EXE!"
-        set "DISPLAY=!DISPLAY:%TARGET_ABS%\=!"
-
-        echo Deleted: !DISPLAY!
-
-        set /a DELETED_COUNT+=1
-    )
-)
-
-goto :eof
 
 
 
@@ -535,27 +454,25 @@ rem ============================================================
 
 echo Usage:
 echo   erase.bat [directory regex path]
-echo   erase.bat [directory regex path] -s [-a EXT] ...
+echo   erase.bat [directory regex path] [-a EXT] ...
+echo.
+echo Default behavior:
+echo   Recursively cleans the selected directory.
+echo   Keeps:
+echo                   .cpp .h .lib .dll .pdf .tex .txt .md
+echo                   .zip .png .jpg .jpeg .obj .mtl .bat
+echo   Debug and Release directories are removed completely
+echo   regardless of file extension.
+echo   Other deleted files are summarized by extension and count.
+echo   Empty subdirectories are removed deepest-first.
 echo.
 echo Options:
-echo   -s            Recursively clean the selected directory.
-echo                 Keeps:
-echo                   .cpp .h .lib .pdf .tex .txt .md
-echo                   .zip .png .jpg .jpeg .obj .mtl .bat
-echo                 Debug and Release directories are removed
-echo                 completely regardless of file extension.
-echo                 Other deleted files are summarized by
-echo                 extension and count.
-echo                 Empty subdirectories are removed
-echo                 deepest-first.
-echo.
-echo   -a EXT        Preserve one additional extension in -s mode.
+echo   -a EXT        Preserve one additional extension.
 echo                 May be repeated. Leading dot is optional.
 echo.
 echo Examples:
 echo   erase.bat top.*/.*/bottom.*1
-echo   erase.bat top.*/.*/bottom.*1 -s
-echo   erase.bat top.*/.*/bottom.*1 -s -a png -a c
+echo   erase.bat top.*/.*/bottom.*1 -a c
 
 endlocal
 exit /b 1
