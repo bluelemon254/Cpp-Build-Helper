@@ -1184,9 +1184,15 @@ function Build-Source([IO.FileSystemInfo] $Target, [string] $Root) {
             if ($workspaceFreeglut) { $projectLinkFiles += $workspaceFreeglut }
         }
     }
-    $artifacts = Ensure-VisualStudioArtifacts $Root $allSources $headers $includeDirectories $projectLinkFiles $usesFreeglut $needsFreeglutAdapter $msysFreeglut
-    $projects = @($artifacts.Projects)
-    $solution = $artifacts.Solution
+    if ($script:UseGcc) {
+        $projects = @(Get-FilesByExtension $Root @('.vcxproj'))
+        $solutions = @(Get-ChildItem -LiteralPath $Root -File -Filter '*.sln' -ErrorAction SilentlyContinue | Sort-Object FullName)
+        $solution = if ($solutions.Count -gt 0) { $solutions[0].FullName } else { $null }
+    } else {
+        $artifacts = Ensure-VisualStudioArtifacts $Root $allSources $headers $includeDirectories $projectLinkFiles $usesFreeglut $needsFreeglutAdapter $msysFreeglut
+        $projects = @($artifacts.Projects)
+        $solution = $artifacts.Solution
+    }
     $compilerDisplay = if ($script:UseGcc) { 'g++' } else { 'msvc' }
     Write-BuildLayout $Root $compilerDisplay $allSources $headers $projects $solution $localLibraries
 

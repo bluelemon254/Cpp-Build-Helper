@@ -21,7 +21,8 @@ Windows `cmd`에서 C++ 프로젝트를 간단하게 빌드하고 실행하기 �
 
 ## Visual Studio 프로젝트
 
-`run.bat`은 `.vcxproj`를 자동으로 생성할 수 있습니다.
+`run.bat`은 MSVC 사용 시 `.vcxproj`와 `.sln`을 자동으로 생성할 수 있습니다.
+`-g` 옵션을 붙이면 g++로 빌드하며, `.vcxproj`와 `.sln`을 생성하거나 갱신하지 않습니다.
 
 Visual Studio 버전이나 Windows SDK 버전은 직접 고정하지 않고,
 **현재 컴퓨터에 설치된 기본값을 사용합니다.**
